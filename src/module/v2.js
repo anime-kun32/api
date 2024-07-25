@@ -4,6 +4,7 @@ import axios from "axios";
 import httpStatus from "http-status";
 import dotenv from "dotenv";
 import { ANIME } from "@consumet/extensions";
+import { ofetch } from "ofetch";
 
 import {
   InfoQuery,
@@ -12,6 +13,7 @@ import {
   TrendingQuery,
   PopularQuery,
 } from "../model/aniquery.js";
+import { incorrectDataID } from "../utils/incorrectData.js";
 
 dotenv.config();
 
@@ -28,32 +30,47 @@ const FetchAnilist = axios.create({
   },
 });
 
-const FetchMalSyncData = async (malid) => {
-  const data = await axios
-    .get(
-      `https://raw.githubusercontent.com/bal-mackup/mal-backup/master/anilist/anime/${malid}.json`
-    )
-    .catch(
-      (err) => httpStatus[`${err.response.status}_MESSAGE`] || err.message
-    );
-  return data;
+const FetchMappingData = async (id) => {
+  const malBackupData = await ofetch(
+    `https://raw.githubusercontent.com/bal-mackup/mal-backup/master/anilist/anime/${id}.json`,
+    {
+      cache: "force-cache",
+      responseType: "json",
+    }
+  ).catch((err) => err);
+
+  if (
+    malBackupData === "404 Not Found" ||
+    malBackupData.statusCode === 404 ||
+    Object.keys(malBackupData.Sites).length === 0 ||
+    malBackupData.Sites.Gogoanime === undefined
+  ) {
+    const malBackupData_2 = await ofetch(
+      `https://api-mappings.madara.live/anime/${id}`,
+      {
+        cache: "force-cache",
+      }
+    ).catch((err) => err);
+    return malBackupData_2.mappings.malSync;
+  }
+
+  return malBackupData;
 };
 
-const getIDeachProvider = async (json) => {
+const getIDeachProvider = async (json, id) => {
   let idGogo = "";
   let idGogoDub = "";
   let idZoro = "";
   let id9anime = "";
   let idPahe = "";
 
-  for (const animePage in json.data.Sites) {
-    const animeInfo = json.data.Sites[animePage];
+  for (const animePage in json.Sites) {
+    const animeInfo = json.Sites[animePage];
     for (const animeId in animeInfo) {
       const anime = animeInfo[animeId];
       if (animePage === "Gogoanime") {
-        idGogo = Object.values(json.data.Sites[animePage])[0]?.identifier || "";
-        idGogoDub =
-          Object.values(json.data.Sites[animePage])[1]?.identifier || "";
+        idGogo = Object.values(json.Sites[animePage])[0]?.identifier || "";
+        idGogoDub = Object.values(json.Sites[animePage])[1]?.identifier || "";
       } else if (animePage === "Zoro") {
         idZoro = anime.url.includes("https://zoro.to/")
           ? anime.url.replace("https://zoro.to/", "")
@@ -66,6 +83,16 @@ const getIDeachProvider = async (json) => {
         idPahe = anime.identifier;
       }
     }
+  }
+
+  if (incorrectDataID().find((item) => item.id === id)) {
+    return {
+      idGogo: incorrectDataID().find((item) => item.id === id).idGogo,
+      idGogoDub: incorrectDataID().find((item) => item.id === id).idGogoDub,
+      idZoro: incorrectDataID().find((item) => item.id === id).idZoro,
+      id9anime: incorrectDataID().find((item) => item.id === id).id9anime,
+      idPahe: incorrectDataID().find((item) => item.id === id).idPahe,
+    };
   }
 
   return {
@@ -83,16 +110,19 @@ const AnimeInfo = async (id) => {
     const { data } = await FetchAnilist.post("", {
       query,
     });
-    const masdata = await FetchMalSyncData(data.data.Media.id);
 
+    const masdata = await FetchMappingData(id);
     let idprovider;
     let isDub = false;
-    if (!masdata || !masdata.data || !masdata.data.Sites) {
+    if (!masdata || masdata === null || masdata === undefined) {
       idprovider = null;
+    } else if (!masdata.Sites?.Gogoanime) {
+      idprovider = null;
+      isDub = false;
     } else {
-      idprovider = await getIDeachProvider(masdata);
-      if (masdata.data.Sites.Gogoanime) {
-        if (JSON.stringify(masdata.data.Sites.Gogoanime).includes("dub")) {
+      idprovider = await getIDeachProvider(masdata, id);
+      if (masdata.Sites?.Gogoanime) {
+        if (JSON.stringify(masdata.Sites.Gogoanime).includes("dub")) {
           isDub = true;
         }
       }
@@ -131,6 +161,7 @@ const AnimeInfo = async (id) => {
       relation: relations,
     };
   } catch (err) {
+    console.log(err);
     if (err.response) {
       return {
         code: err.response.status,
@@ -556,8 +587,8 @@ const AniEpisodeList = async ({ id, provider }) => {
             provider.providerId === "gogoanime"
               ? episode.id.replace("/", "")
               : provider.providerId === "zoro"
-                ? episode.id.replace("/watch/", "")
-                : episode.id,
+              ? episode.id.replace("/watch/", "")
+              : episode.id,
           episode: episode.number,
           title: episode.title,
           isFiller: episode.isFiller,
@@ -580,8 +611,8 @@ const AniEpisodeList = async ({ id, provider }) => {
           provider === "gogoanime"
             ? episode.id.replace("/", "")
             : provider === "zoro"
-              ? episode.id.replace("/watch/", "")
-              : episode.id,
+            ? episode.id.replace("/watch/", "")
+            : episode.id,
         episode: episode.number,
         title: episode.title,
         isFiller: episode.isFiller,
@@ -606,7 +637,7 @@ const AniEpisodeList = async ({ id, provider }) => {
 
 // eslint-disable-next-line default-param-last, no-unused-vars
 const AniEpisodeMapper = async (id, provider = "gogoanime", dub) => {
-  const json = await FetchMalSyncData(id);
+  const json = await FetchMappingData(id);
   const getID = await getIDeachProvider(json);
   let data;
 
