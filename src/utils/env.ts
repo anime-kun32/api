@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const envVariables = z.object({
-  NODE_ENV: z.enum(["development", "production"]).default("development"),
+  NODE_ENV: z.enum(["development", "production"]).default("production"),
   PORT: z.string().default("8000"),
   ALLOWED_HOSTS: z.string().default("*"),
   BLOCK_WITH_CORS: z.preprocess(Boolean, z.boolean()).default(false),
